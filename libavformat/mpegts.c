@@ -924,6 +924,7 @@ static void mpegts_find_stream_type(AVStream *st,
                 // st->codecpar->channels = 1;
                 // st->codecpar->channel_layout = AV_CH_LAYOUT_MONO;
                 // st->codecpar->ch_layout = AVChannelLayout();
+                st->codecpar->codec_type = types->codec_type;
                 st->codecpar->ch_layout.nb_channels = 1;
                 st->codecpar->sample_rate = 8000;
             }

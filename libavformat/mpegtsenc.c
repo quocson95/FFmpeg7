@@ -443,6 +443,12 @@ static int get_dvb_stream_type(AVFormatContext *s, AVStream *st)
             stream_type = STREAM_TYPE_PRIVATE_DATA;
         }
         break;
+    case AV_CODEC_ID_PCM_ALAW:
+        stream_type = 0x90;
+        break;
+    case AV_CODEC_ID_PCM_MULAW:
+        stream_type =   0x91;
+        break;
     default:
         av_log_once(s, AV_LOG_WARNING, AV_LOG_DEBUG, &ts_st->data_st_warning,
                     "Stream %d, codec %s, is muxed as a private data stream "
