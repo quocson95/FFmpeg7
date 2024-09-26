@@ -494,6 +494,12 @@ static int get_m2ts_stream_type(AVFormatContext *s, AVStream *st)
     case AV_CODEC_ID_HDMV_TEXT_SUBTITLE:
         stream_type = 0x92;
         break;
+     case AV_CODEC_ID_PCM_MULAW:
+        stream_type = 0xb1;
+        break;
+    case AV_CODEC_ID_PCM_ALAW:
+        stream_type = 0xb2;
+        break;    
     default:
         av_log_once(s, AV_LOG_WARNING, AV_LOG_DEBUG, &ts_st->data_st_warning,
                     "Stream %d, codec %s, is muxed as a private data stream "
@@ -1456,7 +1462,9 @@ static int get_pes_stream_id(AVFormatContext *s, AVStream *st, int stream_id, in
     } else if (st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO &&
                (st->codecpar->codec_id == AV_CODEC_ID_MP2 ||
                 st->codecpar->codec_id == AV_CODEC_ID_MP3 ||
-                st->codecpar->codec_id == AV_CODEC_ID_AAC)) {
+                st->codecpar->codec_id == AV_CODEC_ID_AAC ||
+                st->codecpar->codec_id == AV_CODEC_ID_PCM_ALAW ||
+                st->codecpar->codec_id == AV_CODEC_ID_PCM_MULAW)) {
         return STREAM_ID_AUDIO_STREAM_0;
     } else if (st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO &&
                 st->codecpar->codec_id == AV_CODEC_ID_AC3 &&
