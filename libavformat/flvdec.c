@@ -39,6 +39,7 @@
 #include "demux.h"
 #include "internal.h"
 #include "flv.h"
+#include "hevc.h"
 
 #define VALIDATE_INDEX_TS_THRESH 2500
 
@@ -352,6 +353,8 @@ static int flv_same_video_codec(AVCodecParameters *vpar, uint32_t flv_codecid)
         return vpar->codec_id == AV_CODEC_ID_VP6A;
     case FLV_CODECID_H264:
         return vpar->codec_id == AV_CODEC_ID_H264;
+    case FLV_CODECID_HEVC:
+        return vpar->codec_id == AV_CODEC_ID_HEVC;
     default:
         return vpar->codec_tag == flv_codecid;
     }
@@ -412,6 +415,11 @@ static int flv_set_video_codec(AVFormatContext *s, AVStream *vstream,
         break;
     case FLV_CODECID_MPEG4:
         par->codec_id = AV_CODEC_ID_MPEG4;
+        break;
+    case FLV_CODECID_HEVC:
+        par->codec_id = AV_CODEC_ID_HEVC;
+        vstreami->need_parsing = AVSTREAM_PARSE_NONE;
+        ret = 3;     // not 4, reading packet type will consume one byte
         break;
     default:
         avpriv_request_sample(s, "Video codec (%x)", flv_codecid);
@@ -1444,14 +1452,21 @@ retry_duration:
         st->codecpar->codec_id == AV_CODEC_ID_MPEG4 ||
         st->codecpar->codec_id == AV_CODEC_ID_HEVC ||
         st->codecpar->codec_id == AV_CODEC_ID_AV1 ||
-        st->codecpar->codec_id == AV_CODEC_ID_VP9) {
+        st->codecpar->codec_id == AV_CODEC_ID_VP9 ||        
+        st->codecpar->codec_id == AV_CODEC_ID_HEVC ) {
         int type = 0;
-        if (enhanced_flv && stream_type == FLV_STREAM_TYPE_VIDEO) {
-            type = flags & 0x0F;
-        } else {
+        if ( st->codecpar->codec_id == AV_CODEC_ID_HEVC) {
             type = avio_r8(s->pb);
             size--;
+        } else {
+            if (enhanced_flv && stream_type == FLV_STREAM_TYPE_VIDEO) {
+                type = flags & 0x0F;
+            } else {
+                type = avio_r8(s->pb);
+                size--;
+            }
         }
+        
 
         if (size < 0) {
             ret = AVERROR_INVALIDDATA;
@@ -1463,8 +1478,7 @@ retry_duration:
             flv->meta_color_info_flag = 0;
         }
 
-        if (st->codecpar->codec_id == AV_CODEC_ID_H264 || st->codecpar->codec_id == AV_CODEC_ID_MPEG4 ||
-            (st->codecpar->codec_id == AV_CODEC_ID_HEVC && type == PacketTypeCodedFrames)) {
+        if (st->codecpar->codec_id == AV_CODEC_ID_H264 || st->codecpar->codec_id == AV_CODEC_ID_MPEG4 )    {
             // sign extension
             int32_t cts = (avio_rb24(s->pb) + 0xff800000) ^ 0xff800000;
             pts = av_sat_add64(dts, cts);
@@ -1480,9 +1494,26 @@ retry_duration:
             }
             size -= 3;
         }
+        if (st->codecpar->codec_id == AV_CODEC_ID_HEVC  )    {
+            // sign extension
+            int32_t cts = (avio_rb24(s->pb) + 0xff800000) ^ 0xff800000;
+            // pts = av_sat_add64(dts, cts);
+             pts = dts + cts;
+            if (cts < 0) { // dts might be wrong
+                if (!flv->wrong_dts)
+                    av_log(s, AV_LOG_WARNING,
+                        "Negative cts, previous timestamps might be wrong.\n");
+                flv->wrong_dts = 1;
+            } else if (FFABS(dts - pts) > 1000*60*15) {
+                av_log(s, AV_LOG_WARNING,
+                       "invalid timestamps %"PRId64" %"PRId64"\n", dts, pts);
+                dts = pts = AV_NOPTS_VALUE;
+            }
+        }
         if (type == 0 && (!st->codecpar->extradata || st->codecpar->codec_id == AV_CODEC_ID_AAC ||
             st->codecpar->codec_id == AV_CODEC_ID_H264 || st->codecpar->codec_id == AV_CODEC_ID_HEVC ||
-            st->codecpar->codec_id == AV_CODEC_ID_AV1 || st->codecpar->codec_id == AV_CODEC_ID_VP9)) {
+            st->codecpar->codec_id == AV_CODEC_ID_AV1 || st->codecpar->codec_id == AV_CODEC_ID_VP9 || 
+            st->codecpar->codec_id == AV_CODEC_ID_HEVC)) {
             AVDictionaryEntry *t;
 
             if (st->codecpar->extradata) {

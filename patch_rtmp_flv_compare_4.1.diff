@@ -1,0 +1,144 @@
+diff --git a/libavformat/flv.h b/libavformat/flv.h
+index f710963b92..e6225e7642 100644
+--- a/libavformat/flv.h
++++ b/libavformat/flv.h
+@@ -116,6 +116,7 @@ enum {
+     FLV_CODECID_H264    = 7,
+     FLV_CODECID_REALH263= 8,
+     FLV_CODECID_MPEG4   = 9,
++    FLV_CODECID_HEVC   = 12,
+ };
+ 
+ enum {
+diff --git a/libavformat/flvdec.c b/libavformat/flvdec.c
+index 1fb3e0cd3f..3c467745da 100644
+--- a/libavformat/flvdec.c
++++ b/libavformat/flvdec.c
+@@ -39,6 +39,7 @@
+ #include "demux.h"
+ #include "internal.h"
+ #include "flv.h"
++#include "hevc.h"
+ 
+ #define VALIDATE_INDEX_TS_THRESH 2500
+ 
+@@ -352,6 +353,8 @@ static int flv_same_video_codec(AVCodecParameters *vpar, uint32_t flv_codecid)
+         return vpar->codec_id == AV_CODEC_ID_VP6A;
+     case FLV_CODECID_H264:
+         return vpar->codec_id == AV_CODEC_ID_H264;
++    case FLV_CODECID_HEVC:
++        return vpar->codec_id == AV_CODEC_ID_HEVC;
+     default:
+         return vpar->codec_tag == flv_codecid;
+     }
+@@ -413,6 +416,11 @@ static int flv_set_video_codec(AVFormatContext *s, AVStream *vstream,
+     case FLV_CODECID_MPEG4:
+         par->codec_id = AV_CODEC_ID_MPEG4;
+         break;
++    case FLV_CODECID_HEVC:
++        par->codec_id = AV_CODEC_ID_HEVC;
++        vstreami->need_parsing = AVSTREAM_PARSE_NONE;
++        ret = 3;     // not 4, reading packet type will consume one byte
++        break;
+     default:
+         avpriv_request_sample(s, "Video codec (%x)", flv_codecid);
+         par->codec_tag = flv_codecid;
+@@ -1444,14 +1452,21 @@ retry_duration:
+         st->codecpar->codec_id == AV_CODEC_ID_MPEG4 ||
+         st->codecpar->codec_id == AV_CODEC_ID_HEVC ||
+         st->codecpar->codec_id == AV_CODEC_ID_AV1 ||
+-        st->codecpar->codec_id == AV_CODEC_ID_VP9) {
++        st->codecpar->codec_id == AV_CODEC_ID_VP9 ||        
++        st->codecpar->codec_id == AV_CODEC_ID_HEVC ) {
+         int type = 0;
+-        if (enhanced_flv && stream_type == FLV_STREAM_TYPE_VIDEO) {
+-            type = flags & 0x0F;
+-        } else {
++        if ( st->codecpar->codec_id == AV_CODEC_ID_HEVC) {
+             type = avio_r8(s->pb);
+             size--;
++        } else {
++            if (enhanced_flv && stream_type == FLV_STREAM_TYPE_VIDEO) {
++                type = flags & 0x0F;
++            } else {
++                type = avio_r8(s->pb);
++                size--;
++            }
+         }
++        
+ 
+         if (size < 0) {
+             ret = AVERROR_INVALIDDATA;
+@@ -1463,8 +1478,7 @@ retry_duration:
+             flv->meta_color_info_flag = 0;
+         }
+ 
+-        if (st->codecpar->codec_id == AV_CODEC_ID_H264 || st->codecpar->codec_id == AV_CODEC_ID_MPEG4 ||
+-            (st->codecpar->codec_id == AV_CODEC_ID_HEVC && type == PacketTypeCodedFrames)) {
++        if (st->codecpar->codec_id == AV_CODEC_ID_H264 || st->codecpar->codec_id == AV_CODEC_ID_MPEG4 )    {
+             // sign extension
+             int32_t cts = (avio_rb24(s->pb) + 0xff800000) ^ 0xff800000;
+             pts = av_sat_add64(dts, cts);
+@@ -1480,9 +1494,26 @@ retry_duration:
+             }
+             size -= 3;
+         }
++        if (st->codecpar->codec_id == AV_CODEC_ID_HEVC  )    {
++            // sign extension
++            int32_t cts = (avio_rb24(s->pb) + 0xff800000) ^ 0xff800000;
++            // pts = av_sat_add64(dts, cts);
++             pts = dts + cts;
++            if (cts < 0) { // dts might be wrong
++                if (!flv->wrong_dts)
++                    av_log(s, AV_LOG_WARNING,
++                        "Negative cts, previous timestamps might be wrong.\n");
++                flv->wrong_dts = 1;
++            } else if (FFABS(dts - pts) > 1000*60*15) {
++                av_log(s, AV_LOG_WARNING,
++                       "invalid timestamps %"PRId64" %"PRId64"\n", dts, pts);
++                dts = pts = AV_NOPTS_VALUE;
++            }
++        }
+         if (type == 0 && (!st->codecpar->extradata || st->codecpar->codec_id == AV_CODEC_ID_AAC ||
+             st->codecpar->codec_id == AV_CODEC_ID_H264 || st->codecpar->codec_id == AV_CODEC_ID_HEVC ||
+-            st->codecpar->codec_id == AV_CODEC_ID_AV1 || st->codecpar->codec_id == AV_CODEC_ID_VP9)) {
++            st->codecpar->codec_id == AV_CODEC_ID_AV1 || st->codecpar->codec_id == AV_CODEC_ID_VP9 || 
++            st->codecpar->codec_id == AV_CODEC_ID_HEVC)) {
+             AVDictionaryEntry *t;
+ 
+             if (st->codecpar->extradata) {
+diff --git a/libavformat/flvenc.c b/libavformat/flvenc.c
+index f34df61c0e..b3a36e1e8c 100644
+--- a/libavformat/flvenc.c
++++ b/libavformat/flvenc.c
+@@ -40,7 +40,7 @@
+ #include "mux.h"
+ #include "libavutil/opt.h"
+ #include "libavcodec/put_bits.h"
+-
++#include "hevc.h"
+ 
+ static const AVCodecTag flv_video_codec_ids[] = {
+     { AV_CODEC_ID_FLV1,     FLV_CODECID_H263 },
+@@ -52,10 +52,10 @@ static const AVCodecTag flv_video_codec_ids[] = {
+     { AV_CODEC_ID_VP6,      FLV_CODECID_VP6 },
+     { AV_CODEC_ID_VP6A,     FLV_CODECID_VP6A },
+     { AV_CODEC_ID_H264,     FLV_CODECID_H264 },
+-    { AV_CODEC_ID_HEVC,     MKBETAG('h', 'v', 'c', '1') },
++    { AV_CODEC_ID_HEVC,     FLV_CODECID_HEVC },
+     { AV_CODEC_ID_AV1,      MKBETAG('a', 'v', '0', '1') },
+     { AV_CODEC_ID_VP9,      MKBETAG('v', 'p', '0', '9') },
+-    { AV_CODEC_ID_NONE,     0 }
++    { AV_CODEC_ID_NONE,     0 }    
+ };
+ 
+ static const AVCodecTag flv_audio_codec_ids[] = {
+@@ -948,7 +948,7 @@ end:
+         for (i = 0; i < s->nb_streams; i++) {
+             AVCodecParameters *par = s->streams[i]->codecpar;
+             if (par->codec_type == AVMEDIA_TYPE_VIDEO &&
+-                    (par->codec_id == AV_CODEC_ID_H264 || par->codec_id == AV_CODEC_ID_MPEG4))
++                    (par->codec_id == AV_CODEC_ID_H264 || par->codec_id == AV_CODEC_ID_MPEG4 || par->codec_id == AV_CODEC_ID_HEVC))
+                 put_eos_tag(pb, flv->last_ts[i], par->codec_id);
+         }
+     }

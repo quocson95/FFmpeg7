@@ -40,7 +40,7 @@
 #include "mux.h"
 #include "libavutil/opt.h"
 #include "libavcodec/put_bits.h"
-
+#include "hevc.h"
 
 static const AVCodecTag flv_video_codec_ids[] = {
     { AV_CODEC_ID_FLV1,     FLV_CODECID_H263 },
@@ -52,10 +52,10 @@ static const AVCodecTag flv_video_codec_ids[] = {
     { AV_CODEC_ID_VP6,      FLV_CODECID_VP6 },
     { AV_CODEC_ID_VP6A,     FLV_CODECID_VP6A },
     { AV_CODEC_ID_H264,     FLV_CODECID_H264 },
-    { AV_CODEC_ID_HEVC,     MKBETAG('h', 'v', 'c', '1') },
+    { AV_CODEC_ID_HEVC,     FLV_CODECID_HEVC },
     { AV_CODEC_ID_AV1,      MKBETAG('a', 'v', '0', '1') },
     { AV_CODEC_ID_VP9,      MKBETAG('v', 'p', '0', '9') },
-    { AV_CODEC_ID_NONE,     0 }
+    { AV_CODEC_ID_NONE,     0 }    
 };
 
 static const AVCodecTag flv_audio_codec_ids[] = {
@@ -948,7 +948,7 @@ end:
         for (i = 0; i < s->nb_streams; i++) {
             AVCodecParameters *par = s->streams[i]->codecpar;
             if (par->codec_type == AVMEDIA_TYPE_VIDEO &&
-                    (par->codec_id == AV_CODEC_ID_H264 || par->codec_id == AV_CODEC_ID_MPEG4))
+                    (par->codec_id == AV_CODEC_ID_H264 || par->codec_id == AV_CODEC_ID_MPEG4 || par->codec_id == AV_CODEC_ID_HEVC))
                 put_eos_tag(pb, flv->last_ts[i], par->codec_id);
         }
     }
